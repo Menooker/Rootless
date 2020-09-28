@@ -1,0 +1,3 @@
+[submodule "3rdparty/PFishHook"]
+	path = 3rdparty/PFishHook
+	url = https://github.com/Menooker/PFishHook
