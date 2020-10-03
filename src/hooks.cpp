@@ -15,6 +15,7 @@
 #include <assert.h>
 #include <libgen.h>
 #include <grp.h>
+#include <sys/time.h>
 
 bool isDirExist(const std::string &path);
 
@@ -56,15 +57,34 @@ static ShadowFileState get_fixed_path(const char *pathname, char *outpath)
     {
         len1--;
     }
-    memcpy(outpath, path_prefix, path_prefix_len);
+    // todo: check pathname ends with \0 or '/'
+    if (!strncmp(pathname, path_prefix, path_prefix_len - 1))
+    {
+        // if path name starts with prefix
+        assert(len1 + 1 < PATH_MAX);
+        memcpy(outpath, pathname, len1);
+        outpath[len1] = 0;
+        return ShadowFileState::Exists;
+    }
     size_t currentlen = path_prefix_len;
     // resolve relative
     if (pathname[0] != '/')
     {
         char *ret = getcwd(outpath + currentlen, PATH_MAX - currentlen);
         assert(ret);
+
+        // todo: check pathname ends with \0 or '/'
+        if (!strncmp(outpath + currentlen, path_prefix, path_prefix_len - 1))
+        {
+            // if current dir is in prefix
+            assert(len1 + 1 < PATH_MAX);
+            memcpy(outpath, pathname, len1);
+            outpath[len1] = 0;
+            return ShadowFileState::Exists;
+        }
         currentlen += strlen(ret);
     }
+    memcpy(outpath, path_prefix, path_prefix_len);
     if (len1 + currentlen + del_path_postfix_len >= PATH_MAX)
     {
         fprintf(stderr, "Path length overflow %s\n", pathname);
@@ -102,17 +122,59 @@ void mark_del(const char *path)
 {
     std::string ret = path;
     ret += ".del_file";
-    creat(ret.c_str(), 0660);
+    int retv = creat(ret.c_str(), 0660);
+    close(retv);
+    errno = 0;
 }
 
-def_name(mkdir, int, const char*, mode_t);
-static int mymkdir(const char* name, mode_t mode) {
+def_name(chdir, int, const char *);
+static int mychdir(const char *name)
+{
     char mypath[PATH_MAX];
-    auto status= get_fixed_path(name,mypath);
+    auto status = get_fixed_path(name, mypath);
+    if (status == ShadowFileState::Deleted)
+    {
+        errno = ENOENT;
+        return -1;
+    }
+    else if (status == ShadowFileState::Exists)
+    {
+        return CallOld<Name_chdir>(mypath);
+    }
+    else
+    {
+        return CallOld<Name_chdir>(name);
+    }
+}
+
+def_name(utimes, int, const char *, const struct timeval *);
+static int myutimes(const char *filename, const struct timeval times[2])
+{
+    char mypath[PATH_MAX];
+    auto status = get_fixed_path(filename, mypath);
+    if (status == ShadowFileState::Deleted)
+    {
+        errno = ENOENT;
+        return -1;
+    }
+    else if (status == ShadowFileState::Exists)
+    {
+        return CallOld<Name_utimes>(mypath, times);
+    }
+    else
+    {
+        return CallOld<Name_utimes>(filename, times);
+    }
+}
+
+def_name(mkdir, int, const char *, mode_t);
+static int mymkdir(const char *name, mode_t mode)
+{
+    char mypath[PATH_MAX];
+    auto status = get_fixed_path(name, mypath);
     makeParentPath(mypath);
     return CallOld<Name_mkdir>(mypath, mode);
 }
-
 
 def_name_no_arg(geteuid, uid_t);
 static uid_t mygeteuid()
@@ -120,7 +182,7 @@ static uid_t mygeteuid()
     return 0;
 }
 
-def_name(setuid,int, uid_t);
+def_name(setuid, int, uid_t);
 static int mysetuid(uid_t)
 {
     return 0;
@@ -138,14 +200,26 @@ static int mysetgroups(size_t size, const gid_t *list)
     return 0;
 }
 
-def_name(seteuid,int, uid_t);
+def_name(seteuid, int, uid_t);
 static int myseteuid(uid_t)
 {
     return 0;
 }
 
-def_name(setegid,int, gid_t);
+def_name(setegid, int, gid_t);
 static int mysetegid(gid_t)
+{
+    return 0;
+}
+
+def_name(setresgid, int, gid_t, gid_t, gid_t);
+static int mysetresgid(gid_t, gid_t, gid_t)
+{
+    return 0;
+}
+
+def_name(setresuid, int, uid_t, uid_t, uid_t);
+static int mysetresuid(uid_t, uid_t, uid_t)
 {
     return 0;
 }
@@ -184,11 +258,45 @@ static int myunlink(const char *name)
     }
 }
 
+def_name(rmdir, int, const char *);
+static int myrmdir(const char *name)
+{
+    char mypath[PATH_MAX];
+    auto status = get_fixed_path(name, mypath);
+    int olderrno;
+    int ret;
+    if (status == ShadowFileState::Deleted)
+    {
+        errno = ENOENT;
+        return -1;
+    }
+    else if (status == ShadowFileState::Exists)
+    {
+        ret = CallOld<Name_rmdir>(mypath);
+        olderrno = errno;
+        if (ret == 0)
+            mark_del(mypath);
+        errno = olderrno;
+        return ret;
+    }
+    else
+    {
+        if (access(name, F_OK) == 0)
+        {
+            mark_del(mypath);
+            errno = 0;
+            return 0;
+        }
+        errno = ENOENT;
+        return -1;
+    }
+}
+
 void undo_del(const char *path)
 {
     std::string ret = path;
     ret += ".del_file";
-    unlink(ret.c_str());
+    CallOld<Name_unlink>(ret.c_str());
 }
 
 def_name(rename, int, const char *, const char *);
@@ -536,6 +644,55 @@ dirent *myreaddir(DIR *dirp)
     return CallOld<Name_readdir>(dirp);
 }
 
+def_name(chown, int, const char *, __uid_t, __gid_t);
+int mychown(const char *name, __uid_t __owner, __gid_t __group)
+{
+    char mypath[PATH_MAX];
+    auto status = get_fixed_path(name, mypath);
+    const char *thepath = name;
+    if (status == ShadowFileState::Deleted)
+    {
+        errno = ENOENT;
+        return -1;
+    }
+    else if (status == ShadowFileState::Exists)
+    {
+        thepath = mypath;
+    }
+    auto ret = CallOld<Name_chown>(thepath, __owner, __group);
+    if (ret < 0)
+    {
+        perror("chown error ignored: ");
+        return 0;
+    }
+    return ret;
+}
+
+def_name(fchown, int, int, __uid_t, __gid_t);
+int myfchown(int __fd, __uid_t __owner, __gid_t __group)
+{
+    int ret = CallOld<Name_fchown>(__fd, __owner, __group);
+    if (ret < 0)
+    {
+        perror("fchown error ignored: ");
+        return 0;
+    }
+    return ret;
+}
+
+def_name(fchownat, int, int, const char *, __uid_t, __gid_t, int);
+int myfchownat(int __fd, const char *__file, __uid_t __owner,
+               __gid_t __group, int __flag)
+{
+    int ret = CallOld<Name_fchownat>(__fd, __file, __owner, __group, __flag);
+    if (ret < 0)
+    {
+        perror("fchownat error ignored: ");
+        return 0;
+    }
+    return ret;
+}
+
 __attribute__((constructor)) static void HookMe()
 {
     void *handle = dlopen("libpthread.so.0", RTLD_LAZY);
@@ -570,6 +727,14 @@ __attribute__((constructor)) static void HookMe()
     DoHookInLibAndLibC<Name_setegid>(handlec, handle, mysetegid);
     DoHookInLibAndLibC<Name_setgroups>(handlec, handle, mysetgroups);
     DoHookInLibAndLibC<Name_mkdir>(handlec, handle, mymkdir);
+    DoHookInLibAndLibC<Name_chdir>(handlec, handle, mychdir);
+    DoHookInLibAndLibC<Name_fchown>(handlec, handle, myfchown);
+    DoHookInLibAndLibC<Name_fchownat>(handlec, handle, myfchownat);
+    DoHookInLibAndLibC<Name_rmdir>(handlec, handle, myrmdir);
+    DoHookInLibAndLibC<Name_setresgid>(handlec, handle, mysetresgid);
+    DoHookInLibAndLibC<Name_setresuid>(handlec, handle, mysetresuid);
+    DoHookInLibAndLibC<Name_utimes>(handlec, handle, myutimes);
+    DoHookInLibAndLibC<Name_chown>(handlec, handle, mychown);
 }
 
 int OSCopyFile(const char *source, const char *destination)
@@ -609,7 +774,6 @@ int OSCopyFile(const char *source, const char *destination)
 
     return result;
 }
-
 
 static bool domakePath(const std::string &path)
 {
