@@ -18,33 +18,7 @@
 
 bool isDirExist(const std::string &path);
 
-static bool domakePath(const std::string &path)
-{
-    mode_t mode = 0755;
-    int ret = mkdir(path.c_str(), mode);
-    if (ret == 0)
-        return true;
-
-    switch (errno)
-    {
-    case ENOENT:
-        // parent didn't exist, try to create it
-        {
-            int pos = path.find_last_of('/');
-            if (pos == std::string::npos)
-                return false;
-            if (!domakePath(path.substr(0, pos)))
-                return false;
-        }
-        // now, try to create again
-        return 0 == mkdir(path.c_str(), mode);
-    case EEXIST:
-        // done!
-        return isDirExist(path);
-    default:
-        return false;
-    }
-}
+static bool domakePath(const std::string &path);
 
 bool makePath(const char *path)
 {
@@ -93,7 +67,7 @@ static ShadowFileState get_fixed_path(const char *pathname, char *outpath)
     }
     if (len1 + currentlen + del_path_postfix_len >= PATH_MAX)
     {
-        fprintf(stderr, "Path length overflow\n");
+        fprintf(stderr, "Path length overflow %s\n", pathname);
         std::abort();
     }
     memcpy(outpath + currentlen, pathname, len1);
@@ -130,6 +104,15 @@ void mark_del(const char *path)
     ret += ".del_file";
     creat(ret.c_str(), 0660);
 }
+
+def_name(mkdir, int, const char*, mode_t);
+static int mymkdir(const char* name, mode_t mode) {
+    char mypath[PATH_MAX];
+    auto status= get_fixed_path(name,mypath);
+    makeParentPath(mypath);
+    return CallOld<Name_mkdir>(mypath, mode);
+}
+
 
 def_name_no_arg(geteuid, uid_t);
 static uid_t mygeteuid()
@@ -586,6 +569,7 @@ __attribute__((constructor)) static void HookMe()
     DoHookInLibAndLibC<Name_seteuid>(handlec, handle, myseteuid);
     DoHookInLibAndLibC<Name_setegid>(handlec, handle, mysetegid);
     DoHookInLibAndLibC<Name_setgroups>(handlec, handle, mysetgroups);
+    DoHookInLibAndLibC<Name_mkdir>(handlec, handle, mymkdir);
 }
 
 int OSCopyFile(const char *source, const char *destination)
@@ -624,4 +608,33 @@ int OSCopyFile(const char *source, const char *destination)
     close(output);
 
     return result;
+}
+
+
+static bool domakePath(const std::string &path)
+{
+    mode_t mode = 0755;
+    int ret = CallOld<Name_mkdir>(path.c_str(), mode);
+    if (ret == 0)
+        return true;
+
+    switch (errno)
+    {
+    case ENOENT:
+        // parent didn't exist, try to create it
+        {
+            int pos = path.find_last_of('/');
+            if (pos == std::string::npos)
+                return false;
+            if (!domakePath(path.substr(0, pos)))
+                return false;
+        }
+        // now, try to create again
+        return 0 == CallOld<Name_mkdir>(path.c_str(), mode);
+    case EEXIST:
+        // done!
+        return isDirExist(path);
+    default:
+        return false;
+    }
 }
