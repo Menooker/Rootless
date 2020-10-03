@@ -95,6 +95,7 @@ static ShadowFileState get_fixed_path(const char *pathname, char *outpath)
     memcpy(outpath + currentlen, del_path_postfix, del_path_postfix_len + 1);
     if (access(outpath, F_OK) == 0)
     {
+        outpath[currentlen] = 0;
         return ShadowFileState::Deleted;
     }
     outpath[currentlen] = 0;
