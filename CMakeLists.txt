@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.5)
 project(Rootless)
 set(LIB_NAME Rootless)
+set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_CPP_FLAGS "${CMAKE_CPP_FLAGS} -fPIC")
 add_subdirectory(${PROJECT_SOURCE_DIR}/3rdparty/PFishHook)
 file(GLOB_RECURSE RL_SOURCES
