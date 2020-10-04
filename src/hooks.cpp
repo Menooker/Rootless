@@ -177,52 +177,117 @@ static int mymkdir(const char *name, mode_t mode)
     return CallOld<Name_mkdir>(mypath, mode);
 }
 
-def_name_no_arg(geteuid, uid_t);
-static uid_t mygeteuid()
+static gid_t fake_groups[100] = {0};
+static size_t group_num = 1;
+def_name(setgroups, int, size_t, const gid_t *);
+static int mysetgroups(size_t size, const gid_t *list)
 {
+    assert(size < 100);
+    memcpy(fake_groups, list, size * sizeof(gid_t));
+    group_num = size;
     return 0;
 }
 
-def_name(setuid, int, uid_t);
-static int mysetuid(uid_t)
+def_name(getgroups, int, size_t, gid_t *);
+static int mygetgroups(size_t size, gid_t *list)
 {
+    //todo: check overflow
+    memcpy(list, fake_groups, group_num * sizeof(gid_t));
+    return group_num;
+}
+
+static gid_t mygid = 0;
+static gid_t myegid = 0;
+static gid_t mysgid = 0;
+def_name(setegid, int, gid_t);
+static int mysetegid(gid_t v)
+{
+    myegid = v;
+    return 0;
+}
+
+def_name(setgid, int, gid_t);
+static int mysetgid(gid_t v)
+{
+    mygid = v;
+    return 0;
+}
+
+def_name_no_arg(getgid, gid_t);
+static gid_t mygetgid()
+{
+    return mygid;
+}
+
+def_name_no_arg(getegid, gid_t);
+static gid_t mygetegid()
+{
+    return myegid;
+}
+
+def_name(setresgid, int, gid_t, gid_t, gid_t);
+static int mysetresgid(gid_t r, gid_t e, gid_t s)
+{
+    mygid = r;
+    myegid = e;
+    mysgid = s;
+    return 0;
+}
+
+def_name(getresgid, int, gid_t *, gid_t *, gid_t *);
+static int mygetresgid(gid_t *r, gid_t *e, gid_t *s)
+{
+    *r = mygid;
+    *e = myegid;
+    *s = mysgid;
+    return 0;
+}
+
+static uid_t myuid = 0;
+static uid_t myeuid = 0;
+static uid_t mysuid = 0;
+def_name(setresuid, int, uid_t, uid_t, uid_t);
+static int mysetresuid(uid_t r, uid_t e, uid_t s)
+{
+    myuid = r;
+    myeuid = e;
+    mysuid = s;
+    return 0;
+}
+
+def_name(getresuid, int, uid_t *, uid_t *, uid_t *);
+static int mygetresuid(uid_t *r, uid_t *e, uid_t *s)
+{
+    *r = myuid;
+    *e = myeuid;
+    *s = mysuid;
+    return 0;
+}
+
+def_name(seteuid, int, uid_t);
+static int myseteuid(uid_t v)
+{
+    myeuid = v;
+    return 0;
+}
+
+def_name_no_arg(geteuid, uid_t);
+static uid_t mygeteuid()
+{
+    return myeuid;
+}
+
+def_name(setuid, int, uid_t);
+static int mysetuid(uid_t v)
+{
+    myuid = v;
     return 0;
 }
 
 def_name_no_arg(getuid, uid_t);
 static uid_t mygetuid()
 {
-    return 0;
-}
-
-def_name(setgroups, int, size_t, const gid_t *);
-static int mysetgroups(size_t size, const gid_t *list)
-{
-    return 0;
-}
-
-def_name(seteuid, int, uid_t);
-static int myseteuid(uid_t)
-{
-    return 0;
-}
-
-def_name(setegid, int, gid_t);
-static int mysetegid(gid_t)
-{
-    return 0;
-}
-
-def_name(setresgid, int, gid_t, gid_t, gid_t);
-static int mysetresgid(gid_t, gid_t, gid_t)
-{
-    return 0;
-}
-
-def_name(setresuid, int, uid_t, uid_t, uid_t);
-static int mysetresuid(uid_t, uid_t, uid_t)
-{
-    return 0;
+    return myuid;
 }
 
 def_name(unlink, int, const char *);
@@ -727,6 +792,7 @@ __attribute__((constructor)) static void HookMe()
     DoHookInLibAndLibC<Name_seteuid>(handlec, handle, myseteuid);
     DoHookInLibAndLibC<Name_setegid>(handlec, handle, mysetegid);
     DoHookInLibAndLibC<Name_setgroups>(handlec, handle, mysetgroups);
+    DoHookInLibAndLibC<Name_getgroups>(handlec, handle, mygetgroups);
     DoHookInLibAndLibC<Name_mkdir>(handlec, handle, mymkdir);
     DoHookInLibAndLibC<Name_chdir>(handlec, handle, mychdir);
     DoHookInLibAndLibC<Name_fchown>(handlec, handle, myfchown);
@@ -734,8 +800,13 @@ __attribute__((constructor)) static void HookMe()
     DoHookInLibAndLibC<Name_rmdir>(handlec, handle, myrmdir);
     DoHookInLibAndLibC<Name_setresgid>(handlec, handle, mysetresgid);
     DoHookInLibAndLibC<Name_setresuid>(handlec, handle, mysetresuid);
+    DoHookInLibAndLibC<Name_getresgid>(handlec, handle, mygetresgid);
+    DoHookInLibAndLibC<Name_getresuid>(handlec, handle, mygetresuid);
     DoHookInLibAndLibC<Name_utimes>(handlec, handle, myutimes);
     DoHookInLibAndLibC<Name_chown>(handlec, handle, mychown);
+    DoHookInLibAndLibC<Name_getgid>(handlec, handle, mygetgid);
+    DoHookInLibAndLibC<Name_getegid>(handlec, handle, mygetegid);
+    DoHookInLibAndLibC<Name_setgid>(handlec, handle, mysetgid);
 }
 
 int OSCopyFile(const char *source, const char *destination)
