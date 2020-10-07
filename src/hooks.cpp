@@ -70,7 +70,7 @@ static ShadowFileState get_fixed_path(const char *pathname, char *outpath)
     // resolve relative
     if (pathname[0] != '/')
     {
-        char *ret = getcwd(outpath + currentlen, PATH_MAX - currentlen);
+        char *ret = getcwd(outpath + currentlen, PATH_MAX - currentlen - 1);
         assert(ret);
 
         // todo: check pathname ends with \0 or '/'
@@ -83,6 +83,9 @@ static ShadowFileState get_fixed_path(const char *pathname, char *outpath)
             return ShadowFileState::Exists;
         }
         currentlen += strlen(ret);
+        // append a /
+        outpath[currentlen] = '/';
+        currentlen += 1;
     }
     memcpy(outpath, path_prefix, path_prefix_len);
     if (len1 + currentlen + del_path_postfix_len >= PATH_MAX)
@@ -177,12 +180,12 @@ static int mymkdir(const char *name, mode_t mode)
     return CallOld<Name_mkdir>(mypath, mode);
 }
 
-static gid_t fake_groups[100] = {0};
+static gid_t fake_groups[1024] = {0};
 static size_t group_num = 1;
 def_name(setgroups, int, size_t, const gid_t *);
 static int mysetgroups(size_t size, const gid_t *list)
 {
-    assert(size < 100);
+    assert(size < 1024);
     memcpy(fake_groups, list, size * sizeof(gid_t));
     group_num = size;
     return 0;
@@ -191,8 +194,7 @@ static int mysetgroups(size_t size, const gid_t *list)
 def_name(getgroups, int, size_t, gid_t *);
 static int mygetgroups(size_t size, gid_t *list)
 {
-    //todo: check overflow
-    memcpy(list, fake_groups, group_num * sizeof(gid_t));
+    memcpy(list, fake_groups, std::min(size, group_num) * sizeof(gid_t));
     return group_num;
 }
 
@@ -324,6 +326,52 @@ static int myunlink(const char *name)
     }
 }
 
+def_name(unlinkat, int, int, const char *, int);
+static int myunlinkat(int dirp, const char *name, int flag)
+{
+    if (dirp != AT_FDCWD && name[0] != '/')
+    {
+        //if is relative
+        std::string mypath = get_fd_path(dirp);
+        if (mypath.back() != '/')
+        {
+            mypath.push_back('/');
+        }
+        mypath += name;
+        return myunlinkat(AT_FDCWD, mypath.c_str(), flag);
+    }
+
+    char mypath[PATH_MAX];
+    auto status = get_fixed_path(name, mypath);
+    int olderrno;
+    int ret;
+    if (status == ShadowFileState::Deleted)
+    {
+        errno = ENOENT;
+        return -1;
+    }
+    else if (status == ShadowFileState::Exists)
+    {
+        ret = CallOld<Name_unlinkat>(dirp, mypath, flag);
+        olderrno = errno;
+        if (ret == 0)
+            mark_del(mypath);
+        errno = olderrno;
+        return ret;
+    }
+    else
+    {
+        if (access(name, F_OK) == 0)
+        {
+            mark_del(mypath);
+            errno = 0;
+            return 0;
+        }
+        errno = ENOENT;
+        return -1;
+    }
+}
+
 def_name(rmdir, int, const char *);
 static int myrmdir(const char *name)
 {
@@ -404,7 +452,7 @@ static int myrename(const char *oldpath, const char *newpath)
         }
 
         mark_del(mypath);
-        if (statusnew == ShadowFileState::Deleted)
+        if (ret == 0 && statusnew == ShadowFileState::Deleted)
         {
             undo_del(mynewpath);
         }
@@ -605,6 +653,41 @@ static int myxstat(int ver, const char *pathname, struct stat *statbuf)
     }
 }
 
+def_name(__fxstatat, int, int, int, const char *, struct stat *, int);
+static int myfxstatat(int ver, int dirp, const char *filename,
+                      struct stat *stat_buf, int flag)
+{
+    if (dirp != AT_FDCWD && filename[0] != '/')
+    {
+        //if is relative
+        std::string mypath = get_fd_path(dirp);
+
+        fprintf(stderr, "relative ststat %s %s\n", mypath.c_str(), filename);
+        if (mypath.back() != '/')
+        {
+            mypath.push_back('/');
+        }
+        mypath += filename;
+        return myfxstatat(ver, AT_FDCWD, mypath.c_str(), stat_buf, flag);
+    }
+    fprintf(stderr, "ststat %d %s\n", dirp, filename);
+    char mypath[PATH_MAX];
+    auto status = get_fixed_path(filename, mypath);
+    if (status == ShadowFileState::Deleted)
+    {
+        errno = ENOENT;
+        return -1;
+    }
+    else if (status == ShadowFileState::Exists)
+    {
+        return CallOld<Name___fxstatat>(ver, AT_FDCWD, mypath, stat_buf, flag);
+    }
+    else
+    {
+        return CallOld<Name___fxstatat>(ver, dirp, filename, stat_buf, flag);
+    }
+}
+
 bool isDirExist(const std::string &path)
 {
     struct stat info;
@@ -759,6 +842,52 @@ int myfchownat(int __fd, const char *__file, __uid_t __owner,
     return ret;
 }
 
+def_name(link, int, const char *, const char *);
+int mylink(const char *from, const char *to)
+{
+    char from_path[PATH_MAX];
+    char to_path[PATH_MAX];
+    auto from_status = get_fixed_path(from, from_path);
+    auto to_status = get_fixed_path(to, to_path);
+    if (from_status == ShadowFileState::Deleted)
+    {
+        errno = ENOENT;
+        return -1;
+    }
+    else
+    {
+        bool success = makeParentPath(to_path);
+        assert(success);
+        int ret;
+        int errnoback;
+        if (from_status == ShadowFileState::Exists)
+        {
+            ret = CallOld<Name_link>(from_path, to_path);
+            errnoback = errno;
+        }
+        else
+        {
+            bool success = makeParentPath(from_path);
+            assert(success);
+            if (OSCopyFile(from, from_path) >= 0)
+            {
+                ret = CallOld<Name_link>(from_path, to_path);
+                errnoback = errno;
+            }
+            else
+            {
+                return -1;
+            }
+        }
+        if (ret == 0 && to_status == ShadowFileState::Deleted)
+        {
+            undo_del(to_path);
+        }
+        errno = errnoback;
+        return ret;
+    }
+}
+
 __attribute__((constructor)) static void HookMe()
 {
     void *handle = dlopen("libpthread.so.0", RTLD_LAZY);
@@ -778,6 +907,7 @@ __attribute__((constructor)) static void HookMe()
     DoHookInLibAndLibC<Name_readdir>(handlec, handle, myreaddir);
     DoHookInLibAndLibC<Name___xstat>(handlec, handle, myxstat);
     DoHookInLibAndLibC<Name___lxstat>(handlec, handle, mylxstat);
+    DoHookInLibAndLibC<Name___fxstatat>(handlec, handle, myfxstatat);
     DoHookInLibAndLibC<Name_getxattr>(handlec, handle, mygetxattr);
     DoHookInLibAndLibC<Name_lgetxattr>(handlec, handle, mylgetxattr);
     DoHookInLibAndLibC<Name_open>(handlec, handle, myopen);
@@ -786,6 +916,8 @@ __attribute__((constructor)) static void HookMe()
     DoHookInLibAndLibC<Name_fchmodat>(handlec, handle, myfchmodat);
     DoHookInLibAndLibC<Name_rename>(handlec, handle, myrename);
     DoHookInLibAndLibC<Name_unlink>(handlec, handle, myunlink);
+    DoHookInLibAndLibC<Name_unlinkat>(handlec, handle, myunlinkat);
+    DoHookInLibAndLibC<Name_link>(handlec, handle, mylink);
     DoHookInLibAndLibC<Name_geteuid>(handlec, handle, mygeteuid);
     DoHookInLibAndLibC<Name_getuid>(handlec, handle, mygetuid);
     DoHookInLibAndLibC<Name_setuid>(handlec, handle, mysetuid);
