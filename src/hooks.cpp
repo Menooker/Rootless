@@ -16,6 +16,7 @@
 #include <libgen.h>
 #include <grp.h>
 #include <sys/time.h>
+#include <vector>
 
 bool isDirExist(const std::string &path);
 
@@ -171,13 +172,20 @@ static int myutimes(const char *filename, const struct timeval times[2])
     }
 }
 
+void undo_del(const char *path);
+
 def_name(mkdir, int, const char *, mode_t);
 static int mymkdir(const char *name, mode_t mode)
 {
     char mypath[PATH_MAX];
     auto status = get_fixed_path(name, mypath);
     makeParentPath(mypath);
-    return CallOld<Name_mkdir>(mypath, mode);
+    int ret = CallOld<Name_mkdir>(mypath, mode);
+    if (ret == 0)
+    {
+        undo_del(mypath);
+    }
+    return ret;
 }
 
 static gid_t fake_groups[1024] = {0};
@@ -326,6 +334,7 @@ static int myunlink(const char *name)
     }
 }
 
+static bool prepareDirIfIsEmpty(const char *name);
 def_name(unlinkat, int, int, const char *, int);
 static int myunlinkat(int dirp, const char *name, int flag)
 {
@@ -354,6 +363,14 @@ static int myunlinkat(int dirp, const char *name, int flag)
     {
         ret = CallOld<Name_unlinkat>(dirp, mypath, flag);
         olderrno = errno;
+        if (ret != 0 && olderrno == ENOTEMPTY)
+        {
+            if (prepareDirIfIsEmpty(mypath))
+            {
+                ret = CallOld<Name_unlinkat>(dirp, mypath, flag);
+                olderrno = errno;
+            }
+        }
         if (ret == 0)
             mark_del(mypath);
         errno = olderrno;
@@ -388,6 +405,14 @@ static int myrmdir(const char *name)
     {
         ret = CallOld<Name_rmdir>(mypath);
         olderrno = errno;
+        if (ret != 0 && olderrno == ENOTEMPTY)
+        {
+            if (prepareDirIfIsEmpty(mypath))
+            {
+                ret = CallOld<Name_rmdir>(mypath);
+                olderrno = errno;
+            }
+        }
         if (ret == 0)
             mark_del(mypath);
         errno = olderrno;
@@ -395,6 +420,7 @@ static int myrmdir(const char *name)
     }
     else
     {
+        // todo: check empty
         if (access(name, F_OK) == 0)
         {
             mark_del(mypath);
@@ -524,7 +550,7 @@ static int myexecve(const char *pathname, char **argv, char **envp)
 def_name(open, int, const char *, int, mode_t);
 static int myopen(const char *pathname, int flags, mode_t mode)
 {
-    if (!strncmp(pathname, "/dev", 4))
+    if (!strncmp(pathname, "/dev", 4) || !strncmp(pathname, "/tmp", 4))
     {
         return CallOld<Name_open>(pathname, flags, mode);
     }
@@ -589,6 +615,22 @@ static int myopen(const char *pathname, int flags, mode_t mode)
             }
         }
     }
+}
+
+def_name(openat, int, int, const char *, int, mode_t);
+static int myopenat(int dirp, const char *pathname, int flags, mode_t mode)
+{
+    if (dirp == AT_FDCWD)
+    {
+        return myopen(pathname, flags, mode);
+    }
+    std::string mypath = get_fd_path(dirp);
+    if (mypath.back() != '/')
+    {
+        mypath.push_back('/');
+    }
+    mypath += pathname;
+    return myopen(mypath.c_str(), flags, mode);
 }
 
 def_name(lgetxattr, ssize_t, const char *, const char *, void *, size_t);
@@ -661,8 +703,6 @@ static int myfxstatat(int ver, int dirp, const char *filename,
     {
         //if is relative
         std::string mypath = get_fd_path(dirp);
-
-        fprintf(stderr, "relative ststat %s %s\n", mypath.c_str(), filename);
         if (mypath.back() != '/')
         {
             mypath.push_back('/');
@@ -670,7 +710,6 @@ static int myfxstatat(int ver, int dirp, const char *filename,
         mypath += filename;
         return myfxstatat(ver, AT_FDCWD, mypath.c_str(), stat_buf, flag);
     }
-    fprintf(stderr, "ststat %d %s\n", dirp, filename);
     char mypath[PATH_MAX];
     auto status = get_fixed_path(filename, mypath);
     if (status == ShadowFileState::Deleted)
@@ -770,6 +809,39 @@ static DIR *myopendir(const char *name)
     return ret;
 }
 
+def_name(fdopendir, DIR *, int);
+static DIR *myfdopendir(int fd)
+{
+    // todo: if fd is in shadow, open unshadowed files
+    char mypath[PATH_MAX];
+    std::string name = get_fd_path(fd);
+    auto status = get_fixed_path(name.c_str(), mypath);
+    auto data = std::make_unique<dir_data>(name.c_str());
+    DIR *ret;
+    if (status == ShadowFileState::Deleted)
+    {
+        errno = ENOENT;
+        return nullptr;
+    }
+    else if (status == ShadowFileState::Exists)
+    {
+        ret = CallOld<Name_opendir>(mypath);
+        if (ret)
+        {
+            int olderr = errno;
+            data->underlying = CallOld<Name_fdopendir>(fd);
+            errno = olderr;
+        }
+    }
+    else
+    {
+        ret = CallOld<Name_fdopendir>(fd);
+    }
+    if (ret)
+        opendir_map.set(ret, std::move(data));
+    return ret;
+}
+
 static int myclosedir(DIR *name)
 {
     int ret = CallOld<Name_closedir>(name);
@@ -777,20 +849,83 @@ static int myclosedir(DIR *name)
     return ret;
 }
 
-def_name(readdir, dirent *, DIR *);
-dirent *myreaddir(DIR *dirp)
+int strEndsWith(const char *str, const char *suffix)
 {
-    auto data = (dir_data *)opendir_map.get(dirp);
+    if (!str || !suffix)
+        return 0;
+    size_t lenstr = strlen(str);
+    size_t lensuffix = strlen(suffix);
+    if (lensuffix > lenstr)
+        return 0;
+    return strncmp(str + lenstr - lensuffix, suffix, lensuffix) == 0;
+}
+
+def_name(readdir, dirent *, DIR *);
+dirent *DoReaddir(DIR *dirp, dir_data *data)
+{
     if (data->underlying)
     {
         dirent *ret = CallOld<Name_readdir>(data->underlying);
         if (ret)
         {
+            if (strEndsWith(ret->d_name, ".del_file"))
+            {
+                return DoReaddir(dirp, data);
+            }
+
             return ret;
         }
         data->release_dir();
     }
-    return CallOld<Name_readdir>(dirp);
+    auto ret = CallOld<Name_readdir>(dirp);
+    if (ret && strEndsWith(ret->d_name, ".del_file"))
+    {
+        return DoReaddir(dirp, data);
+    }
+    return ret;
+}
+
+dirent *myreaddir(DIR *dirp)
+{
+    auto data = (dir_data *)opendir_map.get(dirp);
+    return DoReaddir(dirp, data);
+}
+
+static bool prepareDirIfIsEmpty(const char *n)
+{
+    DIR *d = CallOld<Name_opendir>(n);
+    if (!d)
+    {
+        return false;
+    }
+    bool isempty = true;
+    std::string base_path = n;
+    base_path += '/';
+    std::vector<std::string> paths;
+    for (;;)
+    {
+        auto dir = CallOld<Name_readdir>(d);
+        if (!dir)
+        {
+            break;
+        }
+        bool isCurDirOrParent = !memcmp("..", dir->d_name, 3) || !memcmp(".", dir->d_name, 2);
+        if (!isCurDirOrParent && !strEndsWith(dir->d_name, ".del_file"))
+        {
+            isempty = false;
+            break;
+        }
+        paths.emplace_back(base_path + dir->d_name);
+    }
+    CallOld<Name_closedir>(d);
+    if (isempty)
+    {
+        for (auto &p : paths)
+        {
+            CallOld<Name_unlink>(p.c_str());
+        }
+    }
+    return isempty;
 }
 
 def_name(chown, int, const char *, __uid_t, __gid_t);
@@ -903,6 +1038,7 @@ __attribute__((constructor)) static void HookMe()
         exit(1);
     }
     DoHookInLibAndLibC<Name_opendir>(handlec, handle, myopendir);
+    DoHookInLibAndLibC<Name_fdopendir>(handlec, handle, myfdopendir);
     DoHookInLibAndLibC<Name_closedir>(handlec, handle, myclosedir);
     DoHookInLibAndLibC<Name_readdir>(handlec, handle, myreaddir);
     DoHookInLibAndLibC<Name___xstat>(handlec, handle, myxstat);
@@ -911,6 +1047,7 @@ __attribute__((constructor)) static void HookMe()
     DoHookInLibAndLibC<Name_getxattr>(handlec, handle, mygetxattr);
     DoHookInLibAndLibC<Name_lgetxattr>(handlec, handle, mylgetxattr);
     DoHookInLibAndLibC<Name_open>(handlec, handle, myopen);
+    DoHookInLibAndLibC<Name_openat>(handlec, handle, myopenat);
     DoHookInLibAndLibC<Name_execve>(handlec, handle, myexecve);
     DoHookInLibAndLibC<Name_chmod>(handlec, handle, mychmod);
     DoHookInLibAndLibC<Name_fchmodat>(handlec, handle, myfchmodat);
