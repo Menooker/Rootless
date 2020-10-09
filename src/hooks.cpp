@@ -46,8 +46,8 @@ enum class ShadowFileState
     Exists,
 };
 
-static char path_prefix[] = "/home/menooker/fish/";
-static const int path_prefix_len = sizeof(path_prefix) - 1;
+static char path_prefix[PATH_MAX];
+static int path_prefix_len;
 static char del_path_postfix[] = ".del_file";
 static const int del_path_postfix_len = sizeof(del_path_postfix) - 1;
 static ShadowFileState get_fixed_path(const char *pathname, char *outpath)
@@ -1025,6 +1025,19 @@ int mylink(const char *from, const char *to)
 
 __attribute__((constructor)) static void HookMe()
 {
+    char *newroot = getenv("RL_ROOT");
+    if (!newroot)
+    {
+        fprintf(stderr, "RL_ROOT not set\n");
+        abort();
+    }
+    path_prefix_len = strlen(newroot);
+    if (path_prefix_len >= PATH_MAX - 1)
+    {
+        fprintf(stderr, "RL_ROOT too long\n");
+        abort();
+    }
+    strncpy(path_prefix, newroot, path_prefix_len + 1);
     void *handle = dlopen("libpthread.so.0", RTLD_LAZY);
     if (!handle)
     {
