@@ -172,6 +172,26 @@ static int myutimes(const char *filename, const struct timeval times[2])
     }
 }
 
+def_name(utime, int, const char *, const void *);
+static int myutime(const char *filename, const void* v)
+{
+    char mypath[PATH_MAX];
+    auto status = get_fixed_path(filename, mypath);
+    if (status == ShadowFileState::Deleted)
+    {
+        errno = ENOENT;
+        return -1;
+    }
+    else if (status == ShadowFileState::Exists)
+    {
+        return CallOld<Name_utime>(mypath, v);
+    }
+    else
+    {
+        return CallOld<Name_utime>(filename, v);
+    }
+}
+
 void undo_del(const char *path);
 
 def_name(mkdir, int, const char *, mode_t);
@@ -1085,6 +1105,7 @@ __attribute__((constructor)) static void HookMe()
     DoHookInLibAndLibC<Name_getresgid>(handlec, handle, mygetresgid);
     DoHookInLibAndLibC<Name_getresuid>(handlec, handle, mygetresuid);
     DoHookInLibAndLibC<Name_utimes>(handlec, handle, myutimes);
+    DoHookInLibAndLibC<Name_utime>(handlec, handle, myutime);
     DoHookInLibAndLibC<Name_chown>(handlec, handle, mychown);
     DoHookInLibAndLibC<Name_getgid>(handlec, handle, mygetgid);
     DoHookInLibAndLibC<Name_getegid>(handlec, handle, mygetegid);
