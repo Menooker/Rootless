@@ -46,6 +46,8 @@ enum class ShadowFileState
     Exists,
 };
 
+def_name(access, int, const char *, int);
+
 static char path_prefix[PATH_MAX];
 static int path_prefix_len;
 static char del_path_postfix[] = ".del_file";
@@ -97,14 +99,14 @@ static ShadowFileState get_fixed_path(const char *pathname, char *outpath)
     memcpy(outpath + currentlen, pathname, len1);
     currentlen += len1;
     memcpy(outpath + currentlen, del_path_postfix, del_path_postfix_len + 1);
-    if (access(outpath, F_OK) == 0)
+    if (CallOld<Name_access>(outpath, F_OK) == 0)
     {
         outpath[currentlen] = 0;
         return ShadowFileState::Deleted;
     }
     outpath[currentlen] = 0;
 
-    if (access(outpath, F_OK) == 0)
+    if (CallOld<Name_access>(outpath, F_OK) == 0)
     {
         return ShadowFileState::Exists;
     }
@@ -130,6 +132,25 @@ void mark_del(const char *path)
     int retv = creat(ret.c_str(), 0660);
     close(retv);
     errno = 0;
+}
+
+int myaccess(const char *name, int type)
+{
+    char mypath[PATH_MAX];
+    auto status = get_fixed_path(name, mypath);
+    if (status == ShadowFileState::Deleted)
+    {
+        errno = ENOENT;
+        return -1;
+    }
+    else if (status == ShadowFileState::Exists)
+    {
+        return CallOld<Name_access>(mypath, type);
+    }
+    else
+    {
+        return CallOld<Name_access>(name, type);
+    }
 }
 
 def_name(chdir, int, const char *);
@@ -173,7 +194,7 @@ static int myutimes(const char *filename, const struct timeval times[2])
 }
 
 def_name(utime, int, const char *, const void *);
-static int myutime(const char *filename, const void* v)
+static int myutime(const char *filename, const void *v)
 {
     char mypath[PATH_MAX];
     auto status = get_fixed_path(filename, mypath);
@@ -343,7 +364,7 @@ static int myunlink(const char *name)
     }
     else
     {
-        if (access(name, F_OK) == 0)
+        if (CallOld<Name_access>(name, F_OK) == 0)
         {
             mark_del(mypath);
             errno = 0;
@@ -398,7 +419,7 @@ static int myunlinkat(int dirp, const char *name, int flag)
     }
     else
     {
-        if (access(name, F_OK) == 0)
+        if (CallOld<Name_access>(name, F_OK) == 0)
         {
             mark_del(mypath);
             errno = 0;
@@ -441,7 +462,7 @@ static int myrmdir(const char *name)
     else
     {
         // todo: check empty
-        if (access(name, F_OK) == 0)
+        if (CallOld<Name_access>(name, F_OK) == 0)
         {
             mark_del(mypath);
             errno = 0;
@@ -589,12 +610,15 @@ static int myopen(const char *pathname, int flags, mode_t mode)
         }
         else
         {
-            if (access(pathname, F_OK) == 0)
+            if (CallOld<Name_access>(pathname, F_OK) == 0)
             {
                 // if file exists in underlying FS, open as usual
                 if (flags & O_WRONLY || flags & O_RDWR)
                 {
-                    OSCopyFile(pathname, mypath);
+                    if (OSCopyFile(pathname, mypath) < 0)
+                    {
+                        fprintf(stderr, "Rootless Error: Cannot copy file for write: %s\n", pathname);
+                    }
                     return CallOld<Name_open>(mypath, flags, mode);
                 }
                 else
@@ -626,7 +650,10 @@ static int myopen(const char *pathname, int flags, mode_t mode)
         {
             if (flags & O_WRONLY || flags & O_RDWR)
             {
-                OSCopyFile(pathname, mypath);
+                if (OSCopyFile(pathname, mypath) < 0)
+                {
+                    fprintf(stderr, "Rootless Error: Cannot copy file for write: %s\n", pathname);
+                }
                 return CallOld<Name_open>(mypath, flags, mode);
             }
             else
@@ -1110,6 +1137,7 @@ __attribute__((constructor)) static void HookMe()
     DoHookInLibAndLibC<Name_getgid>(handlec, handle, mygetgid);
     DoHookInLibAndLibC<Name_getegid>(handlec, handle, mygetegid);
     DoHookInLibAndLibC<Name_setgid>(handlec, handle, mysetgid);
+    DoHookInLibAndLibC<Name_access>(handlec, handle, myaccess);
 }
 
 int OSCopyFile(const char *source, const char *destination)
