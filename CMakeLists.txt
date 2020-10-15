@@ -12,6 +12,6 @@ include_directories(
     ${PROJECT_SOURCE_DIR}/
     )
 
-add_library(${LIB_NAME} SHARED src/hooks.cpp)
+add_library(${LIB_NAME} SHARED ${RL_SOURCES})
 target_link_libraries(${LIB_NAME} PFishHook Zydis dl)
 add_dependencies(${LIB_NAME} PFishHook Zydis)
