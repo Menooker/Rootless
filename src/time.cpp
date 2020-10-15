@@ -1,7 +1,8 @@
 
 #include "shadow_path.h"
-#include "dir.h"
+#include "funcs.h"
 using namespace FishHook;
+
 static int myutimes(const char *filename, const struct timeval times[2])
 {
     char mypath[PATH_MAX];
@@ -20,6 +21,7 @@ static int myutimes(const char *filename, const struct timeval times[2])
         return CallOld<Name_utimes>(filename, times);
     }
 }
+rl_hook(utimes)
 
 static int myutime(const char *filename, const void *v)
 {
@@ -39,3 +41,4 @@ static int myutime(const char *filename, const void *v)
         return CallOld<Name_utime>(filename, v);
     }
 }
+rl_hook(utime)

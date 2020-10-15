@@ -1,4 +1,4 @@
-#include "dir.h"
+#include "funcs.h"
 #include "shadow_path.h"
 #include <string.h>
 #include <dirent.h>
@@ -7,7 +7,7 @@
 
 using namespace FishHook;
 
-int mychdir(const char *name)
+static int mychdir(const char *name)
 {
     char mypath[PATH_MAX];
     auto status = get_fixed_path(name, mypath);
@@ -25,8 +25,9 @@ int mychdir(const char *name)
         return CallOld<Name_chdir>(name);
     }
 }
+rl_hook(chdir)
 
-int mymkdir(const char *name, mode_t mode)
+static int mymkdir(const char *name, mode_t mode)
 {
     char mypath[PATH_MAX];
     auto status = get_fixed_path(name, mypath);
@@ -38,6 +39,7 @@ int mymkdir(const char *name, mode_t mode)
     }
     return ret;
 }
+rl_hook(mkdir)
 
 concurrent_hash_map_owned opendir_map;
 
@@ -90,8 +92,8 @@ static DIR *myopendir(const char *name)
         opendir_map.set(ret, std::move(data));
     return ret;
 }
+rl_hook(opendir)
 
-def_name(fdopendir, DIR *, int);
 static DIR *myfdopendir(int fd)
 {
     // todo: if fd is in shadow, open unshadowed files
@@ -123,6 +125,7 @@ static DIR *myfdopendir(int fd)
         opendir_map.set(ret, std::move(data));
     return ret;
 }
+rl_hook(fdopendir)
 
 static int myclosedir(DIR *name)
 {
@@ -130,6 +133,7 @@ static int myclosedir(DIR *name)
     opendir_map.remove(name);
     return ret;
 }
+rl_hook(closedir)
 
 int strEndsWith(const char *str, const char *suffix)
 {
@@ -142,7 +146,6 @@ int strEndsWith(const char *str, const char *suffix)
     return strncmp(str + lenstr - lensuffix, suffix, lensuffix) == 0;
 }
 
-def_name(readdir, dirent *, DIR *);
 dirent *DoReaddir(DIR *dirp, dir_data *data)
 {
     if (data->underlying)
@@ -172,6 +175,7 @@ dirent *myreaddir(DIR *dirp)
     auto data = (dir_data *)opendir_map.get(dirp);
     return DoReaddir(dirp, data);
 }
+rl_hook(readdir);
 
 bool prepareDirIfIsEmpty(const char *n)
 {
@@ -251,4 +255,5 @@ static int myrmdir(const char *name)
         return -1;
     }
 }
+rl_hook(rmdir)
 

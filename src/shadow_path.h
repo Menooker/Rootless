@@ -18,6 +18,7 @@ void undo_del(const char *path);
 
 bool isDirExist(const std::string &path);
 bool makePath(const char *path);
-bool makeParentPath(const char *path)
+bool makeParentPath(const char *path);
+int OSCopyFile(const char *source, const char *destination);
 
 bool prepareDirIfIsEmpty(const char *name);

@@ -1,10 +1,9 @@
 #include "shadow_path.h"
-#include "dir.h"
+#include "funcs.h"
 #include <unistd.h>
 #include <string.h>
 using namespace FishHook;
 
-def_name(rename, int, const char *, const char *);
 static int myrename(const char *oldpath, const char *newpath)
 {
     char mypath[PATH_MAX];
@@ -51,9 +50,8 @@ static int myrename(const char *oldpath, const char *newpath)
         return ret;
     }
 }
+rl_hook(rename)
 
-
-def_name(execve, int, const char *, char **, char **);
 static int myexecve(const char *pathname, char **argv, char **envp)
 {
     char mypath[PATH_MAX];
@@ -72,8 +70,8 @@ static int myexecve(const char *pathname, char **argv, char **envp)
         return CallOld<Name_execve>(pathname, argv, envp);
     }
 }
+rl_hook(execve)
 
-def_name(open, int, const char *, int, mode_t);
 static int myopen(const char *pathname, int flags, mode_t mode)
 {
     if (!strncmp(pathname, "/dev", 4) || !strncmp(pathname, "/tmp", 4))
@@ -148,8 +146,8 @@ static int myopen(const char *pathname, int flags, mode_t mode)
         }
     }
 }
+rl_hook(open)
 
-def_name(openat, int, int, const char *, int, mode_t);
 static int myopenat(int dirp, const char *pathname, int flags, mode_t mode)
 {
     if (dirp == AT_FDCWD)
@@ -164,4 +162,5 @@ static int myopenat(int dirp, const char *pathname, int flags, mode_t mode)
     mypath += pathname;
     return myopen(mypath.c_str(), flags, mode);
 }
+rl_hook(openat)
 

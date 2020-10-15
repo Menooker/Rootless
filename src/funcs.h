@@ -1,8 +1,10 @@
 #include <HookFunc.h>
 #include <unistd.h>
-struct DIR;
+struct __dirstream;
+typedef __dirstream DIR;
 struct timeval;
 struct stat;
+struct dirent;
 
 namespace FishHook
 {
@@ -10,6 +12,8 @@ namespace FishHook
     def_name(mkdir, int, const char *, mode_t);
     def_name(opendir, DIR *, const char *);
     def_name(closedir, int, DIR *);
+    def_name(readdir, dirent *, DIR *);
+    def_name(fdopendir, DIR *, int);
     def_name(access, int, const char *, int);
     def_name(utimes, int, const char *, const struct timeval *);
     def_name(utime, int, const char *, const void *);
@@ -41,4 +45,10 @@ namespace FishHook
     def_name_no_arg(geteuid, uid_t);
     def_name(setuid, int, uid_t);
     def_name_no_arg(getuid, uid_t);
+    def_name(openat, int, int, const char *, int, mode_t);
+    def_name(rename, int, const char *, const char *);
+    def_name(execve, int, const char *, char **, char **);
+    def_name(open, int, const char *, int, mode_t);
 } // namespace FishHook
+
+#define rl_hook(name) auto_hook(name, my##name)

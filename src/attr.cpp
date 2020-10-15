@@ -1,7 +1,7 @@
 #include "shadow_path.h"
-#include "dir.h"
+#include "funcs.h"
 using namespace FishHook;
-int myaccess(const char *name, int type)
+static int myaccess(const char *name, int type)
 {
     char mypath[PATH_MAX];
     auto status = get_fixed_path(name, mypath);
@@ -19,6 +19,7 @@ int myaccess(const char *name, int type)
         return CallOld<Name_access>(name, type);
     }
 }
+rl_hook(access);
 
 static ssize_t mylgetxattr(const char *__path, const char *__name,
                            void *__value, size_t __size)
@@ -39,6 +40,7 @@ static ssize_t mylgetxattr(const char *__path, const char *__name,
         return CallOld<Name_lgetxattr>(__path, __name, __value, __size);
     }
 }
+auto_hook(lgetxattr,mylgetxattr)
 
 static ssize_t mygetxattr(const char *__path, const char *__name,
                           void *__value, size_t __size)
@@ -59,6 +61,7 @@ static ssize_t mygetxattr(const char *__path, const char *__name,
         return CallOld<Name_getxattr>(__path, __name, __value, __size);
     }
 }
+auto_hook(getxattr, mygetxattr)
 
 static int myxstat(int ver, const char *pathname, struct stat *statbuf)
 {
@@ -78,6 +81,7 @@ static int myxstat(int ver, const char *pathname, struct stat *statbuf)
         return CallOld<Name___xstat>(ver, pathname, statbuf);
     }
 }
+auto_hook(__xstat, myxstat)
 
 static int myfxstatat(int ver, int dirp, const char *filename,
                       struct stat *stat_buf, int flag)
@@ -109,6 +113,7 @@ static int myfxstatat(int ver, int dirp, const char *filename,
         return CallOld<Name___fxstatat>(ver, dirp, filename, stat_buf, flag);
     }
 }
+auto_hook(__fxstatat, myfxstatat)
 
 static int mylxstat(int ver, const char *pathname, struct stat *statbuf)
 {
@@ -128,9 +133,10 @@ static int mylxstat(int ver, const char *pathname, struct stat *statbuf)
         return CallOld<Name___lxstat>(ver, pathname, statbuf);
     }
 }
+auto_hook(__lxstat, mylxstat)
 
 
-int mychown(const char *name, __uid_t __owner, __gid_t __group)
+static int mychown(const char *name, __uid_t __owner, __gid_t __group)
 {
     char mypath[PATH_MAX];
     auto status = get_fixed_path(name, mypath);
@@ -152,8 +158,9 @@ int mychown(const char *name, __uid_t __owner, __gid_t __group)
     }
     return ret;
 }
+rl_hook(chown)
 
-int myfchown(int __fd, __uid_t __owner, __gid_t __group)
+static int myfchown(int __fd, __uid_t __owner, __gid_t __group)
 {
     int ret = CallOld<Name_fchown>(__fd, __owner, __group);
     if (ret < 0)
@@ -163,8 +170,9 @@ int myfchown(int __fd, __uid_t __owner, __gid_t __group)
     }
     return ret;
 }
+rl_hook(fchown)
 
-int myfchownat(int __fd, const char *__file, __uid_t __owner,
+static int myfchownat(int __fd, const char *__file, __uid_t __owner,
                __gid_t __group, int __flag)
 {
     int ret = CallOld<Name_fchownat>(__fd, __file, __owner, __group, __flag);
@@ -175,6 +183,7 @@ int myfchownat(int __fd, const char *__file, __uid_t __owner,
     }
     return ret;
 }
+rl_hook(fchownat)
 
 static int mychmod(const char *pathname, mode_t mode)
 {
@@ -198,6 +207,7 @@ static int mychmod(const char *pathname, mode_t mode)
         return -1;
     }
 }
+rl_hook(chmod);
 
 static int myfchmodat(int dirp, const char *pathname, mode_t mode)
 {
@@ -213,3 +223,4 @@ static int myfchmodat(int dirp, const char *pathname, mode_t mode)
     mypath += pathname;
     return mychmod(mypath.c_str(), mode);
 }
+rl_hook(fchmodat)

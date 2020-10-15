@@ -1,6 +1,6 @@
 #include "shadow_path.h"
+#include "funcs.h"
 #include <string.h>
-#include "attr.h"
 
 using namespace FishHook;
 

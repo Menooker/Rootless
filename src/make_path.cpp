@@ -1,6 +1,8 @@
 #include "shadow_path.h"
-#include "dir.h"
+#include "funcs.h"
 #include <libgen.h>
+#include <sys/stat.h>
+#include <sys/sendfile.h>
 
 using namespace FishHook;
 

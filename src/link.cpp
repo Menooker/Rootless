@@ -1,5 +1,5 @@
 #include "shadow_path.h"
-#include "dir.h"
+#include "funcs.h"
 using namespace FishHook;
 
 
@@ -35,6 +35,7 @@ static int myunlink(const char *name)
         return -1;
     }
 }
+rl_hook(unlink)
 
 static int myunlinkat(int dirp, const char *name, int flag)
 {
@@ -88,6 +89,7 @@ static int myunlinkat(int dirp, const char *name, int flag)
         return -1;
     }
 }
+rl_hook(unlinkat)
 
 int mylink(const char *from, const char *to)
 {
@@ -133,3 +135,4 @@ int mylink(const char *from, const char *to)
         return ret;
     }
 }
+rl_hook(link)
