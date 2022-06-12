@@ -25,15 +25,18 @@ bool makePath(const char *path)
 
 bool makeParentPath(const char *path)
 {
+    auto old_mask = umask(0);
     std::string path2 = path;
     char *dir = dirname((char *)path2.c_str());
-    return domakePath(dir);
+    auto ret = domakePath(dir);
+    umask(old_mask);
+    return ret;
 }
 
 
 static bool domakePath(const std::string &path)
 {
-    mode_t mode = 0755;
+    constexpr mode_t mode = 0755;
     int ret = CallOld<Name_mkdir>(path.c_str(), mode);
     if (ret == 0)
         return true;
@@ -55,6 +58,7 @@ static bool domakePath(const std::string &path)
         // done!
         return isDirExist(path);
     default:
+        fprintf(stderr, "Rootless mkdir failed at %s\n", path.c_str());
         return false;
     }
 }
@@ -72,6 +76,10 @@ int OSCopyFile(const char *source, const char *destination)
     if (!makeParentPath(destination))
     {
         return -1;
+    }
+    if (S_ISDIR(info.st_mode)) {
+        mode_t mode = 0755;
+        return CallOld<Name_mkdir>(destination, mode);
     }
     if ((output = creat(destination,
                         info.st_mode)) == -1)

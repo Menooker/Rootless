@@ -2,7 +2,6 @@
 #include "funcs.h"
 using namespace FishHook;
 
-
 static int myunlink(const char *name)
 {
     char mypath[PATH_MAX];
@@ -35,7 +34,7 @@ static int myunlink(const char *name)
         return -1;
     }
 }
-rl_hook(unlink)
+rl_hook(unlink);
 
 static int myunlinkat(int dirp, const char *name, int flag)
 {
@@ -89,14 +88,16 @@ static int myunlinkat(int dirp, const char *name, int flag)
         return -1;
     }
 }
-rl_hook(unlinkat)
+rl_hook(unlinkat);
 
-int mylink(const char *from, const char *to)
+typedef int (*link_func_type)(const char *from, const char *to);
+static int mylink_impl(const char *from, const char *to, link_func_type func, bool is_symlink)
 {
     char from_path[PATH_MAX];
     char to_path[PATH_MAX];
-    auto from_status = get_fixed_path(from, from_path);
     auto to_status = get_fixed_path(to, to_path);
+    bool is_from_relative = is_symlink && from[0] != '/';
+    auto from_status = is_from_relative ? ShadowFileState::Exists : get_fixed_path(from, from_path);
     if (from_status == ShadowFileState::Deleted)
     {
         errno = ENOENT;
@@ -110,7 +111,7 @@ int mylink(const char *from, const char *to)
         int errnoback;
         if (from_status == ShadowFileState::Exists)
         {
-            ret = CallOld<Name_link>(from_path, to_path);
+            ret = func(is_from_relative?from:from_path, to_path);
             errnoback = errno;
         }
         else
@@ -119,7 +120,7 @@ int mylink(const char *from, const char *to)
             assert(success);
             if (OSCopyFile(from, from_path) >= 0)
             {
-                ret = CallOld<Name_link>(from_path, to_path);
+                ret = func(from_path, to_path);
                 errnoback = errno;
             }
             else
@@ -135,4 +136,15 @@ int mylink(const char *from, const char *to)
         return ret;
     }
 }
-rl_hook(link)
+
+static int mylink(const char *from, const char *to)
+{
+    return mylink_impl(from, to, Name_link::func_wrapper::old_func, false);
+}
+rl_hook(link);
+
+int mysymlink(const char *path1, const char *path2)
+{
+    return mylink_impl(path1, path2, Name_symlink::func_wrapper::old_func, true);
+}
+rl_hook(symlink)

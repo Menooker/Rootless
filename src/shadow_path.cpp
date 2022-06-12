@@ -55,14 +55,15 @@ ShadowFileState get_fixed_path(const char *pathname, char *outpath)
     memcpy(outpath + currentlen, pathname, len1);
     currentlen += len1;
     memcpy(outpath + currentlen, del_path_postfix, del_path_postfix_len + 1);
+
     if (CallOld<Name_access>(outpath, F_OK) == 0)
     {
         outpath[currentlen] = 0;
         return ShadowFileState::Deleted;
     }
     outpath[currentlen] = 0;
-
-    if (CallOld<Name_access>(outpath, F_OK) == 0)
+    struct stat s;
+    if (CallOld<Name___lxstat>(0, outpath, &s) == 0)
     {
         return ShadowFileState::Exists;
     }

@@ -40,7 +40,7 @@ static ssize_t mylgetxattr(const char *__path, const char *__name,
         return CallOld<Name_lgetxattr>(__path, __name, __value, __size);
     }
 }
-auto_hook(lgetxattr,mylgetxattr)
+auto_hook(lgetxattr,mylgetxattr);
 
 static ssize_t mygetxattr(const char *__path, const char *__name,
                           void *__value, size_t __size)
@@ -61,7 +61,7 @@ static ssize_t mygetxattr(const char *__path, const char *__name,
         return CallOld<Name_getxattr>(__path, __name, __value, __size);
     }
 }
-auto_hook(getxattr, mygetxattr)
+auto_hook(getxattr, mygetxattr);
 
 static int myxstat(int ver, const char *pathname, struct stat *statbuf)
 {
@@ -81,7 +81,7 @@ static int myxstat(int ver, const char *pathname, struct stat *statbuf)
         return CallOld<Name___xstat>(ver, pathname, statbuf);
     }
 }
-auto_hook(__xstat, myxstat)
+auto_hook(__xstat, myxstat);
 
 static int myfxstatat(int ver, int dirp, const char *filename,
                       struct stat *stat_buf, int flag)
@@ -113,7 +113,7 @@ static int myfxstatat(int ver, int dirp, const char *filename,
         return CallOld<Name___fxstatat>(ver, dirp, filename, stat_buf, flag);
     }
 }
-auto_hook(__fxstatat, myfxstatat)
+auto_hook(__fxstatat, myfxstatat);
 
 static int mylxstat(int ver, const char *pathname, struct stat *statbuf)
 {
@@ -133,7 +133,7 @@ static int mylxstat(int ver, const char *pathname, struct stat *statbuf)
         return CallOld<Name___lxstat>(ver, pathname, statbuf);
     }
 }
-auto_hook(__lxstat, mylxstat)
+auto_hook(__lxstat, mylxstat);
 
 
 static int mychown(const char *name, __uid_t __owner, __gid_t __group)
@@ -158,7 +158,7 @@ static int mychown(const char *name, __uid_t __owner, __gid_t __group)
     }
     return ret;
 }
-rl_hook(chown)
+rl_hook(chown);
 
 static int myfchown(int __fd, __uid_t __owner, __gid_t __group)
 {
@@ -170,7 +170,7 @@ static int myfchown(int __fd, __uid_t __owner, __gid_t __group)
     }
     return ret;
 }
-rl_hook(fchown)
+rl_hook(fchown);
 
 static int myfchownat(int __fd, const char *__file, __uid_t __owner,
                __gid_t __group, int __flag)
@@ -183,7 +183,7 @@ static int myfchownat(int __fd, const char *__file, __uid_t __owner,
     }
     return ret;
 }
-rl_hook(fchownat)
+rl_hook(fchownat);
 
 static int mychmod(const char *pathname, mode_t mode)
 {
@@ -223,4 +223,28 @@ static int myfchmodat(int dirp, const char *pathname, mode_t mode)
     mypath += pathname;
     return mychmod(mypath.c_str(), mode);
 }
-rl_hook(fchmodat)
+rl_hook(fchmodat);
+
+static int mylchown(const char *name, __uid_t __owner, __gid_t __group)
+{
+    char mypath[PATH_MAX];
+    auto status = get_fixed_path(name, mypath);
+    const char *thepath = name;
+    if (status == ShadowFileState::Deleted)
+    {
+        errno = ENOENT;
+        return -1;
+    }
+    else if (status == ShadowFileState::Exists)
+    {
+        thepath = mypath;
+    }
+    auto ret = CallOld<Name_lchown>(thepath, __owner, __group);
+    if (ret < 0)
+    {
+        perror("Rootless: lchown error ignored: ");
+        return 0;
+    }
+    return ret;
+}
+rl_hook(lchown);

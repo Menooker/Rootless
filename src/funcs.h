@@ -17,6 +17,9 @@ namespace FishHook
     def_name(access, int, const char *, int);
     def_name(utimes, int, const char *, const struct timeval *);
     def_name(utime, int, const char *, const void *);
+    def_name(utimensat, int, int, const char *, const struct timespec[2], int);
+    def_name(futimens, int, int, const struct timespec[2]);
+    def_name(lutimes, int, const char *, const struct timeval[2]);
     def_name(unlinkat, int, int, const char *, int);
     def_name(unlink, int, const char *);
     def_name(rmdir, int, const char *);
@@ -26,6 +29,8 @@ namespace FishHook
     def_name(__fxstatat, int, int, int, const char *, struct stat *, int);
     def_name(__lxstat, int, int, const char *, struct stat *);
     def_name(link, int, const char *, const char *);
+    def_name(symlink, int, const char *, const char *);
+    def_name(lchown, int, const char *, __uid_t, __gid_t);
     def_name(chown, int, const char *, __uid_t, __gid_t);
     def_name(fchown, int, int, __uid_t, __gid_t);
     def_name(fchownat, int, int, const char *, __uid_t, __gid_t, int);
